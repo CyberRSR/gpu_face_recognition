@@ -1,9 +1,9 @@
 # --- recgn_arcnet_superfast_gpu_ct_up_Avid_v9_optimized_FIXED.py ---
-# --- ВЕРСИЯ: MULTI-PROCESS GPU + FIXED CACHE + ROBUST SAVER ---
+# --- VERSION: MULTI-PROCESS GPU + FIXED CACHE + ROBUST SAVER ---
 # --- FIXES: SCRFD decode (sigmoid + correct anchors), consistent preprocess, chunk_meta indexing, mean/std from models, safe Torch->ORT sync ---
 
 import os
-# Жестко ограничиваем библиотеки одним потоком на процесс.
+# Strictly limit libraries to one thread per process.
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
@@ -31,11 +31,11 @@ try:
     from insightface.app import FaceAnalysis
     from insightface.utils import face_align
 except ImportError:
-    print("[!] ОШИБКА: Библиотека 'insightface' не найдена. Установите: pip install insightface onnxruntime-gpu")
+    print("[!] ERROR: Library 'insightface' not found. Install: pip install insightface onnxruntime-gpu")
     sys.exit(1)
 
 # ==========================================
-#               НАСТРОЙКИ
+#               SETTINGS
 # ==========================================
 torch.backends.cudnn.benchmark = True
 
@@ -70,7 +70,7 @@ MERGE_GAP_TOLERANCE = 12.0
 COLOR_PALETTE = ['red', 'lime', 'cyan', 'magenta', 'orange', 'yellow', 'dodgerblue']
 
 # ==========================================
-#           СИСТЕМНЫЕ ФУНКЦИИ
+#           SYSTEM FUNCTIONS
 # ==========================================
 try:
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -109,7 +109,7 @@ def make_providers():
 
 
 def warmup_trt_engine(device_id=0):
-    print(f"[*] WARMUP: Генерирую TensorRT engine (Device {device_id})...")
+    print(f"[*] WARMUP: Generating TensorRT engine (Device {device_id})...")
     if not os.path.exists(TRT_CACHE_PATH):
         os.makedirs(TRT_CACHE_PATH)
 
@@ -124,14 +124,14 @@ def warmup_trt_engine(device_id=0):
     if rec_model:
         rec_in = rec_model.session.get_inputs()[0].name
         rec_out = rec_model.session.get_outputs()[0].name
-        print("[*] WARMUP: Прогрев модели распознавания...")
+        print("[*] WARMUP: Warming up recognition model...")
         fake_blob = np.random.rand(REC_CHUNK_SIZE, 3, 112, 112).astype(np.float32)
         try:
             rec_model.session.run([rec_out], {rec_in: fake_blob})
         except Exception as e:
             print(f"[!] Warn Warmup: {e}")
 
-    print("[*] WARMUP: Готово. Кэш записан/проверен.")
+    print("[*] WARMUP: Done. Cache written/verified.")
     del app
     gc.collect()
     time.sleep(1)
@@ -223,12 +223,12 @@ def save_merged_clip(input_path, output_path, start_time, end_time, detections_i
 
 
 # ==========================================
-#           ЗАГРУЗКА ЭТАЛОНОВ
+#           LOADING REFERENCES
 # ==========================================
 def prepare_reference_embeddings(folder_path, device_id):
     if not os.path.exists(folder_path):
         return []
-    print(f"[*] Загрузка эталонов (Device: {device_id})...")
+    print(f"[*] Loading references (Device: {device_id})...")
 
     app = FaceAnalysis(
         name=MODEL_PACK_NAME,
@@ -244,7 +244,7 @@ def prepare_reference_embeddings(folder_path, device_id):
     rec_in = rec_model.session.get_inputs()[0].name
     rec_out = rec_model.session.get_outputs()[0].name
 
-    # FIX: берём mean/std из модели (чтобы совпадало с видео-частью)
+    # FIX: get mean/std from the model (to match the video part)
     mean = float(getattr(rec_model, 'input_mean', 127.5))
     std = float(getattr(rec_model, 'input_std', 127.5))
 
@@ -270,7 +270,7 @@ def prepare_reference_embeddings(folder_path, device_id):
 
     del app
     gc.collect()
-    print(f"[*] Эталонов: {loaded}")
+    print(f"[*] References loaded: {loaded}")
     return refs
 
 
@@ -349,7 +349,7 @@ def gpu_preprocess_scrfd(batch_frames_uint8, target_size,
 
     x = x.permute(0, 3, 1, 2).contiguous().float()
 
-    # один scale (letterbox)
+    # single scale (letterbox)
     scale = min(det_w / float(W0), det_h / float(H0))
     new_w = max(1, int(round(W0 * scale)))
     new_h = max(1, int(round(H0 * scale)))
@@ -406,7 +406,7 @@ def thread_infer_task(det_model, rec_model, ref_matrix, filled_q, free_q, save_q
     rec_mean = float(getattr(rec_model, 'input_mean', 127.5))
     rec_std = float(getattr(rec_model, 'input_std', 127.5))
 
-    # Ваша ONNX (по логам): outputs[0..2]=scores, [3..5]=bbox, [6..8]=kps
+    # Your ONNX (based on logs): outputs[0..2]=scores, [3..5]=bbox, [6..8]=kps
     stride_map = {
         8: {"score": 0, "bbox": 3, "kps": 6},
         16: {"score": 1, "bbox": 4, "kps": 7},
@@ -416,7 +416,7 @@ def thread_infer_task(det_model, rec_model, ref_matrix, filled_q, free_q, save_q
     input_height, input_width = int(det_shape[0]), int(det_shape[1])
     _num_anchors = 2
 
-    # precompute centers (БЕЗ +0.5)
+    # precompute centers (WITHOUT +0.5)
     center_cache = {}
     for stride in (8, 16, 32):
         feat_h = input_height // stride
@@ -433,18 +433,18 @@ def thread_infer_task(det_model, rec_model, ref_matrix, filled_q, free_q, save_q
     stream = torch.cuda.Stream()
     device_id = torch.cuda.current_device()
 
-    # если batch>1 не поддерживается — один раз выключим batch-mode и дальше покадрово
+    # if batch>1 is not supported — switch off batch-mode once and continue frame-by-frame
     batch_det_supported = True
 
     def _slice_out(arr, i, N, D, B):
         """
-        Возвращает per-frame view без лишних копий.
-        Ожидаемые варианты:
-          - (N, D) (если B==1)
+        Returns per-frame view without unnecessary copies.
+        Expected variants:
+          - (N, D) (if B==1)
           - (B, N, D)
           - (B*N, D)
-          - (B, N*D) (редко)
-          - для scores может быть (B*N,1) / (B,N) / (B,N,1)
+          - (B, N*D) (rare)
+          - for scores it can be (B*N,1) / (B,N) / (B,N,1)
         """
         a = arr
         if D == 1:
@@ -456,7 +456,7 @@ def thread_infer_task(det_model, rec_model, ref_matrix, filled_q, free_q, save_q
                     if a.shape[0] == B * N:
                         return a[i * N:(i + 1) * N, 0]
                     if a.shape[0] == B and a.shape[1] == 1:
-                        # странно, но пусть
+                        # strange, but let it be
                         return a[i:i+1, 0]
                 # (B, N)
                 if a.shape[0] == B and a.shape[1] == N:
@@ -465,7 +465,7 @@ def thread_infer_task(det_model, rec_model, ref_matrix, filled_q, free_q, save_q
                 if a.shape[0] == B and a.shape[1] == N:
                     return a[i]
             elif a.ndim == 3:
-                # (B, N, 1) или (B,1,N)
+                # (B, N, 1) or (B,1,N)
                 if a.shape[0] == B:
                     return a[i].reshape(-1)
             elif a.ndim == 1:
@@ -485,7 +485,7 @@ def thread_infer_task(det_model, rec_model, ref_matrix, filled_q, free_q, save_q
             elif a.ndim == 1:
                 return a.reshape(B, N, D)[i]
 
-        # fallback (копия/reshape), чтобы не падать
+        # fallback (copy/reshape) to avoid crashing
         return np.asarray(a).reshape(B, -1, D)[i]
 
     while True:
@@ -524,7 +524,7 @@ def thread_infer_task(det_model, rec_model, ref_matrix, filled_q, free_q, save_q
             valid_w = int(prep["new_w"])
             valid_h = int(prep["new_h"])
 
-            # 3) DETECT: batch одним вызовом ORT (если возможно)
+            # 3) DETECT: batch in a single ORT call (if possible)
             det_outs_batch = None
             if batch_det_supported and batch_sz > 1:
                 try:
@@ -545,11 +545,11 @@ def thread_infer_task(det_model, rec_model, ref_matrix, filled_q, free_q, save_q
                     det_sess.run_with_iobinding(det_binding)
                     det_outs_batch = det_binding.copy_outputs_to_cpu()
                 except Exception:
-                    # значит модель/движок не принимает batch>1
+                    # means model/engine does not accept batch>1
                     batch_det_supported = False
                     det_outs_batch = None           
 
-            # Если batch режим не работает (или batch_sz==1) — покадрово (как раньше)
+            # If batch mode doesn't work (or batch_sz==1) — frame-by-frame (as before)
             if det_outs_batch is None:
                 # per-frame ORT
                 for i in range(batch_sz):
@@ -570,7 +570,7 @@ def thread_infer_task(det_model, rec_model, ref_matrix, filled_q, free_q, save_q
                     det_sess.run_with_iobinding(det_binding)
                     det_outs = det_binding.copy_outputs_to_cpu()
 
-                    # decode одного кадра
+                    # decode single frame
                     frame_preds = []
                     frame_kpss = []
 
@@ -596,7 +596,7 @@ def thread_infer_task(det_model, rec_model, ref_matrix, filled_q, free_q, save_q
                         bb = bbox_preds[idx_keep]
                         kp = kps_preds[idx_keep]
 
-                        # pad filter (в координатах det-input)
+                        # pad filter (in det-input coordinates)
                         m = (ac[:, 0] < valid_w) & (ac[:, 1] < valid_h)
                         if not np.any(m):
                             continue
@@ -664,7 +664,7 @@ def thread_infer_task(det_model, rec_model, ref_matrix, filled_q, free_q, save_q
                             pass
 
             else:
-                # batch decode: det_outs_batch содержит выходы на весь batch
+                # batch decode: det_outs_batch contains outputs for the whole batch
                 det_outs = det_outs_batch
 
                 for i in range(batch_sz):
@@ -967,11 +967,11 @@ def result_saver(save_q, out_dir, settings):
 
 # --- MAIN ---
 def run():
-    print("--- ЗАПУСК СКРИПТА (MULTI-PROC OPTIMIZED, FIXED DETECTION) ---")
+    print("--- SCRIPT START (MULTI-PROC OPTIMIZED, FIXED DETECTION) ---")
     t_global_start = time.time()
 
     if not torch.cuda.is_available():
-        print("[!] ОШИБКА: CUDA не доступна.")
+        print("[!] ERROR: CUDA is not available.")
         return
 
     if not os.path.exists(TRT_CACHE_PATH):
@@ -981,13 +981,13 @@ def run():
 
     refs = prepare_reference_embeddings(REFERENCE_FACES_FOLDER, 0)
     if not refs:
-        print("[!] Нет эталонов.")
+        print("[!] No references found.")
         return
 
     files = [os.path.join(TARGET_VIDEO_FOLDER, f) for f in os.listdir(TARGET_VIDEO_FOLDER)
              if f.lower().endswith(('.mp4', '.avi', '.mkv', '.mov'))]
     if not files:
-        print("[!] Нет видео.")
+        print("[!] No videos found.")
         return
 
     video_infos = []
@@ -1031,22 +1031,22 @@ def run():
         'pre_upscale_factor': PRE_UPSCALE_FACTOR,
         'box_padding_percentage': BOX_PADDING_PERCENTAGE,
         'rec_chunk_size': REC_CHUNK_SIZE,
-        'det_prob_threshold': 0.25,   # или 0.25 если хотите больше мелких лиц (будет больше мусора)
+        'det_prob_threshold': 0.25,   # or 0.25 if you want more small faces (will result in more garbage)
         'det_size': DET_SIZE,
-        'debug_det': False,                 # True чтобы включить дамп
-        'debug_det_max_batches': 50,         # сколько батчей дампить на поток
-        'debug_det_dump_compare_detect': False,  # прогон det_model.detect (медленно, но 1-2 раза)
-        'debug_det_dir': 'debug_det',       # куда сохранять логи/npz/jpg   
-        'debug_det_frames': [654, 656, 898, 906],        # <-- сюда поставьте кадры, где медленный скрипт “видит/узнаёт”, а быстрый — нет
+        'debug_det': False,                 # True to enable dump
+        'debug_det_max_batches': 50,         # how many batches to dump per thread
+        'debug_det_dump_compare_detect': False,  # run det_model.detect (slow, but 1-2 times)
+        'debug_det_dir': 'debug_det',       # where to save logs/npz/jpg
+        'debug_det_frames': [654, 656, 898, 906],        # <-- put frames here where the slow script “sees/recognizes” but the fast one does not
         'debug_rec': False,
-        'debug_rec_topk': 3,                # сколько топ-кандидатов выводить
-        'debug_rec_max_pairs': 3,           # сколько лиц сравнивать slow-crop vs fast-crop
+        'debug_rec_topk': 3,                # how many top candidates to output
+        'debug_rec_max_pairs': 3,           # how many faces to compare slow-crop vs fast-crop
     }
 
     saver = Process(target=result_saver, args=(save_q, OUTPUT_FOLDER, settings))
     saver.start()
 
-    print(f"[*] Запуск {NUM_GPU_PROCESSES} GPU процессов по {GPU_WORKER_THREADS} потоков...")
+    print(f"[*] Starting {NUM_GPU_PROCESSES} GPU processes with {GPU_WORKER_THREADS} threads each...")
     gpu_processes = []
     for i in range(NUM_GPU_PROCESSES):
         p = Process(
