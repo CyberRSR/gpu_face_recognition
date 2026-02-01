@@ -86,7 +86,7 @@ GPU_WORKER_THREADS = 3      # Threads per GPU process (Parallel inference)
 NUM_CPU_LOADERS = 6         # CPU processes for decoding video frames
 BATCH_SIZE = 20             # Number of faces/frames processed at once
 CUSTOM_THRESHOLD = 0.49     # Similarity threshold (Lower = Stricter, 0.4-0.6 typical)
-DET_SIZE = (1440, 1400)       # Input resolution for the detector. (640,640) is standard. (1440,1440) for 4K small faces.
+DET_SIZE = (1440, 1400)     # Input resolution for the detector. (640,640) is standard. (1440,1440) for 4K small faces.
 MAX_BUFFER_SLOTS = 2048     # Size of the Shared Memory Ring Buffer. Prevents loader stalling.
 
 # Video Slicing Settings
