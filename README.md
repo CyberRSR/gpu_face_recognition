@@ -36,7 +36,7 @@ Visit [pytorch.org/get-started](https://pytorch.org/get-started/locally/) to gen
 
 *Example for CUDA 11.8:*
 ```bash
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu130
 ```
 
 ### 3. Install ONNX Runtime GPU
