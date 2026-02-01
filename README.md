@@ -17,8 +17,8 @@ This project is designed for maximum throughput on NVIDIA GPUs. It uses **Shared
 - **OS**: Windows (tested) or Linux.
 - **Hardware**: NVIDIA GPU with CUDA support (Compute Capability 6.0+ recommended).
 - **Software**:
-  - Python 3.8+
-  - CUDA Toolkit (Recommended: 11.8 or 12.x)
+  - Python 3.13+
+  - CUDA Toolkit (Recommended: 13.0+)
   - CuDNN
   - FFmpeg (Installed globally or placed in a local `ffmpeg/` folder)
 
@@ -34,7 +34,7 @@ cd fast-face-rec-gpu
 **Crucial:** Do not simply run `pip install torch`. You must install the version compatible with your CUDA driver. 
 Visit [pytorch.org/get-started](https://pytorch.org/get-started/locally/) to generate the correct command.
 
-*Example for CUDA 11.8:*
+*Example for CUDA 13.0:*
 ```bash
 pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu130
 ```
@@ -82,13 +82,13 @@ Open `main.py` and adjust the **SETTINGS** section at the top to match your hard
 #               SETTINGS
 # ==========================================
 NUM_GPU_PROCESSES = 2       # Number of independent processes on the GPU
-GPU_WORKER_THREADS = 4      # Threads per GPU process (Parallel inference)
+GPU_WORKER_THREADS = 3      # Threads per GPU process (Parallel inference)
 NUM_CPU_LOADERS = 6         # CPU processes for decoding video frames
-BATCH_SIZE = 16             # Number of faces/frames processed at once
+BATCH_SIZE = 20             # Number of faces/frames processed at once
 CUSTOM_THRESHOLD = 0.49     # Similarity threshold (Lower = Stricter, 0.4-0.6 typical)
 
 # Video Slicing Settings
-FRAME_INTERVAL = 1          # Process every Nth frame (1 = all frames)
+FRAME_INTERVAL = 2          # Process every Nth frame (1 = all frames)
 CLIP_DURATION_BEFORE = 1.0  # Seconds to save before the face appears
 CLIP_DURATION_AFTER = 2.0   # Seconds to save after the face disappears
 ```
