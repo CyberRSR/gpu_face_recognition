@@ -1,6 +1,7 @@
 # Auto-generated requirements
 # Python 3.13.11
 
+av==16.1.0
 insightface==0.7.3
 numpy==2.4.2
 opencv-python==4.13.0.90
