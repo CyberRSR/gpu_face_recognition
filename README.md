@@ -1,4 +1,4 @@
-# SuperFast Face Recognition (GPU/TensorRT)
+# SuperFast Video Face Recognition (GPU/TensorRT)
 
 A high-performance, industrial-grade video face recognition system utilizing **Python**, **InsightFace**, **TensorRT**, and **Multiprocessing**.
 
