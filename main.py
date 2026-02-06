@@ -27,7 +27,7 @@ try:
     import av
     av.logging.set_level(av.logging.ERROR)
 except ImportError:
-    print("[!] ERROR: PyAV not found. Install via: pip install av")
+    print("[!] ERROR: PyAV not found. Please install: pip install av")
     sys.exit(1)
 
 try:
@@ -54,7 +54,7 @@ NUM_GPU_PROCESSES = 5
 GPU_WORKER_THREADS = 2
 
 # ===== KEY CHANGE =====
-# Instead of 8 loaders with seek — 1-2 sequential decoders
+# Instead of 8 loaders with seeking — 1-2 sequential decoders
 NUM_VIDEO_DECODERS = 2  # 1-2 per video (more is not needed!)
 FFMPEG_DECODER_THREADS = 4  # Threads inside FFmpeg
 
@@ -194,10 +194,10 @@ def get_video_info(video_path):
             else:
                 fps = 25.0
             
-            # Number of frames
+            # Frame count
             frames = stream.frames
             if frames == 0 or frames is None:
-                # Estimate via duration
+                # Estimate based on duration
                 if stream.duration and stream.time_base:
                     duration_sec = float(stream.duration * stream.time_base)
                     frames = int(duration_sec * fps)
@@ -240,6 +240,33 @@ def get_video_info(video_path):
         print(f"[Video Info] Error: {e}")
         return None
         
+        
+def get_video_info_pyav(video_path):
+    """Get video info via PyAV (faster than OpenCV)"""
+    try:
+        container = av.open(video_path)
+        stream = container.streams.video[0]
+        
+        frames = stream.frames
+        if frames == 0:
+            # If frames not specified, estimate
+            if stream.duration and stream.time_base:
+                duration_sec = float(stream.duration * stream.time_base)
+                fps = float(stream.average_rate) if stream.average_rate else 25.0
+                frames = int(duration_sec * fps)
+            else:
+                frames = 0
+        
+        w = stream.width
+        h = stream.height
+        fps = float(stream.average_rate) if stream.average_rate else 25.0
+        
+        container.close()
+        return {'frames': frames, 'w': w, 'h': h, 'fps': fps, 'path': video_path}
+    except Exception as e:
+        print(f"[!] Error reading {video_path}: {e}")
+        return None
+
 
 def save_merged_clip(input_path, output_path, start_time, end_time, detections_in_clip, fps):
     try:
@@ -287,7 +314,7 @@ def save_merged_clip(input_path, output_path, start_time, end_time, detections_i
 
 
 # ==========================================
-#           LOADING REFERENCES
+#           LOAD REFERENCES
 # ==========================================
 def prepare_reference_embeddings(folder_path, device_id):
     if not os.path.exists(folder_path):
@@ -340,7 +367,7 @@ def prepare_reference_embeddings(folder_path, device_id):
 
 
 # ==========================================
-#     OPTIMIZED LOADER ON PyAV
+#     OPTIMIZED LOADER USING PyAV
 # ==========================================
 def frame_loader_pyav(video_path, free_q, filled_q, shared_buf, max_frame_size, 
                       shape, start_f, end_f, settings, submitted_counter, loader_id=0):
@@ -362,7 +389,7 @@ def frame_loader_pyav(video_path, free_q, filled_q, shared_buf, max_frame_size,
         container = av.open(video_path)
         stream = container.streams.video[0]
         
-        # Multi-threaded decoding
+        # Multithreaded decoding
         stream.thread_type = 'AUTO'  # AUTO is safer than FRAME
         stream.thread_count = 0  # auto-detect
         
@@ -405,7 +432,7 @@ def frame_loader_pyav(video_path, free_q, filled_q, shared_buf, max_frame_size,
                 else:
                     current_frame = frame.index if hasattr(frame, 'index') else frames_sent
 
-                # Skip to start_f
+                # Skip until start_f
                 if current_frame < start_f:
                     continue
                 
@@ -437,7 +464,7 @@ def frame_loader_pyav(video_path, free_q, filled_q, shared_buf, max_frame_size,
                     free_q.put(idx)
                     continue
                 
-                # Resize if needed
+                # Resize if necessary
                 if img.shape[0] != h or img.shape[1] != w:
                     img = cv2.resize(img, (w, h))
 
@@ -561,17 +588,17 @@ def frame_loader_cv2_optimized(video_path, free_q, filled_q, shared_buf, max_fra
         traceback.print_exc()
 
 # ==========================================
-#    ALTERNATIVE: FFmpeg Pipe (faster for some codecs)
+#    ALTERNATIVE: FFmpeg Pipe (even faster for some codecs)
 # ==========================================
 def frame_loader_ffmpeg_pipe(video_path, free_q, filled_q, shared_buf, max_frame_size,
                              shape, start_f, end_f, settings, submitted_counter, loader_id=0):
     """
     Decoder via FFmpeg subprocess with:
     - select filter for frame skipping (FRAME_INTERVAL)
-    - Multi-threaded decoding
+    - Multithreaded decoding
     - Direct raw BGR output
     
-    ADVANTAGE: FFmpeg can optimize B-frame skipping
+    ADVANTAGE: FFmpeg can optimize skipping B-frames
     """
     try:
         h, w, c = shape
@@ -603,7 +630,7 @@ def frame_loader_ffmpeg_pipe(video_path, free_q, filled_q, shared_buf, max_frame
             cmd, 
             stdout=subprocess.PIPE, 
             stderr=subprocess.DEVNULL,
-            bufsize=frame_len * 4  # Buffer for several frames
+            bufsize=frame_len * 4  # Buffer for multiple frames
         )
 
         batch_indices = []
@@ -726,11 +753,10 @@ def gpu_preprocess_scrfd(batch_frames_uint8, target_size,
 # ==========================================
 def thread_infer_task(det_model, rec_model, ref_matrix, filled_q, free_q, save_q, stats_q,
                       raw_arr, max_frame_size, settings, ref_names):
-    # ... (keep as is - this is the GPU part, not the decoder)
-    # Code identical to original
+    # ... (keeping as is - this is GPU part, not decoder)
     import warnings
     warnings.filterwarnings("ignore")
-    cv2.setNumThreads(0)    
+    cv2.setNumThreads(0)
 
     det_sess = det_model.session
     rec_sess = rec_model.session
@@ -781,7 +807,13 @@ def thread_infer_task(det_model, rec_model, ref_matrix, filled_q, free_q, save_q
     stream = torch.cuda.Stream()
     device_id = torch.cuda.current_device()
 
-    batch_det_supported = True
+    # =========================================================
+    # POINT 4: PINNED MEMORY (cached inside thread)
+    # =========================================================
+    pinned_host = None        # torch.Tensor on CPU with pin_memory=True
+    pinned_host_np = None     # numpy view of pinned_host
+    pinned_shape = None       # (h, w, c)
+    pinned_capacity = int(BATCH_SIZE)  # max batch coming from loader
 
     while True:
         task = filled_q.get()
@@ -799,13 +831,40 @@ def thread_infer_task(det_model, rec_model, ref_matrix, filled_q, free_q, save_q
         meta = []
 
         with torch.cuda.stream(stream):
+            # =========================================================
+            # POINT 4: Fast fetch to pinned + async H2D
+            # =========================================================
             t_f = time.perf_counter()
-            batch_np = np.empty((batch_sz, h, w, c), dtype=np.uint8)
+
+            # (re)create pinned buffer if resolution changes
+            if (pinned_host is None) or (pinned_shape != (h, w, c)):
+                pinned_host = torch.empty(
+                    (pinned_capacity, h, w, c),
+                    dtype=torch.uint8,
+                    device='cpu',
+                    pin_memory=True
+                )
+                pinned_host_np = pinned_host.numpy()
+                pinned_shape = (h, w, c)
+
+            # copy frames from shared memory -> pinned (CPU)
+            # Note: this is a copy, but to pinned, so H2D will be faster/async
             for k, idx in enumerate(indices):
                 off = idx * max_frame_size
-                batch_np[k] = np.frombuffer(full_mem_view[off: off + frame_len], dtype=np.uint8).reshape(h, w, c)
-            gpu_frames = torch.from_numpy(batch_np).to('cuda', non_blocking=True)
+                src = np.frombuffer(
+                    full_mem_view[off: off + frame_len],
+                    dtype=np.uint8
+                ).reshape(h, w, c)
+                np.copyto(pinned_host_np[k], src)
+
+            # numpy view on batch (for face_align / saving)
+            batch_np = pinned_host_np[:batch_sz]
+
+            # async H2D (non_blocking only works with pinned)
+            gpu_frames = pinned_host[:batch_sz].to('cuda', non_blocking=True)
+
             t_fetch = time.perf_counter() - t_f
+            # =========================================================
 
             t_i = time.perf_counter()
             det_input_batch, prep = gpu_preprocess_scrfd(
@@ -817,7 +876,7 @@ def thread_infer_task(det_model, rec_model, ref_matrix, filled_q, free_q, save_q
             valid_w = int(prep["new_w"])
             valid_h = int(prep["new_h"])
 
-            # Detection (simplified - see original for full code)
+            # Detection (as in original: per frame, since onnx batch=1)
             for i in range(batch_sz):
                 det_binding = det_sess.io_binding()
                 det_in = det_input_batch[i:i + 1].contiguous()
@@ -982,8 +1041,9 @@ def thread_infer_task(det_model, rec_model, ref_matrix, filled_q, free_q, save_q
             free_q.put(idx)
 
         stats_q.put(('metrics', (t_fetch, 0.0, t_infer, t_match_sum, time.perf_counter() - t0, faces_found), batch_sz))
-
-
+        
+        
+        
 def gpu_manager_process(device_str, filled_q, free_q, save_q, stats_q,
                         shared_buf, max_frame_size, ref_embs, settings, num_threads, proc_rank):
     try:
@@ -1136,7 +1196,7 @@ def run():
 
     refs = prepare_reference_embeddings(REFERENCE_FACES_FOLDER, 0)
     if not refs:
-        print("[!] No references found.")
+        print("[!] No reference faces found.")
         return
 
     files = [os.path.join(TARGET_VIDEO_FOLDER, f) for f in os.listdir(TARGET_VIDEO_FOLDER)
@@ -1270,7 +1330,7 @@ def run():
         stall_count = 0
 
         while True:
-            # Gather statistics
+            # Gather stats
             while not stats_q.empty():
                 try:
                     msg = stats_q.get_nowait()
@@ -1317,14 +1377,14 @@ def run():
                     stall_count = 0
                 last_submitted = submitted_val
 
-            # Exit conditions
+            # Exit condition
             all_loaders_done = not active_loaders
             all_processed = processed_count >= submitted_val
             
             if all_loaders_done and all_processed and submitted_val > 0:
                 break
                 
-            # Timeout if nothing is happening
+            # Timeout if nothing happens
             if all_loaders_done and submitted_val == 0:
                 print("\n[!] ERROR: Loaders finished but submitted 0 frames!")
                 break
